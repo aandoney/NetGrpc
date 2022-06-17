@@ -1,5 +1,6 @@
 ﻿using AutoMapper;
 using Grpc.Core;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using ShoppingCartGrpc.Data;
@@ -11,15 +12,18 @@ using System.Threading.Tasks;
 
 namespace ShoppingCartGrpc.Services
 {
+    [Authorize]
     public class ShoppingCartService : ShoppingCartProtoService.ShoppingCartProtoServiceBase
     {
         private readonly ShoppingCartContext _shoppingCartDbContext;
+        private readonly DiscountService _discountService;
         private readonly ILogger<ShoppingCartService> _logger;
         private readonly IMapper _mapper;
 
-        public ShoppingCartService(ShoppingCartContext shoppingCartDbContext, ILogger<ShoppingCartService> logger, IMapper mapper)
+        public ShoppingCartService(ShoppingCartContext shoppingCartDbContext, DiscountService discountService, ILogger<ShoppingCartService> logger, IMapper mapper)
         {
             _shoppingCartDbContext = shoppingCartDbContext ?? throw new ArgumentNullException(nameof(shoppingCartDbContext));
+            _discountService = discountService ?? throw new ArgumentNullException(nameof(discountService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
         }
@@ -47,7 +51,7 @@ namespace ShoppingCartGrpc.Services
 
             var isExist = await _shoppingCartDbContext.ShoppingCart.AnyAsync(s => s.UserName == shoppingCart.UserName);
 
-            if (!isExist)
+            if (isExist)
             {
                 _logger.LogError("Invalid UserName for ShoppingCart creation. UserName : {userName}", shoppingCart.UserName);
                 throw new RpcException(new Status(StatusCode.NotFound, $"ShoppingCart with UserName={shoppingCart.UserName}"));
@@ -63,6 +67,7 @@ namespace ShoppingCartGrpc.Services
             return shoppingCartModel;
         }
 
+        [AllowAnonymous]
         public override async Task<RemoveItemIntoShoppingCartResponse> RemoveItemIntoShoppingCart(RemoveItemIntoShoppingCartRequest request,
             ServerCallContext context)
         {
@@ -89,6 +94,7 @@ namespace ShoppingCartGrpc.Services
             return response;
         }
 
+        [AllowAnonymous]
         public override async Task<AddItemIntoShoppingCartResponse> AddItemIntoShoppingCart(
             IAsyncStreamReader<AddItemIntoShoppingCartRequest> requestStream,
             ServerCallContext context)
@@ -112,8 +118,8 @@ namespace ShoppingCartGrpc.Services
                 else
                 {
                     //grpc call discount -- check discount and calculate last price
-                    float discount = 100;
-                    newAddedCartItem.Price -= discount;
+                    var discount = await _discountService.GetDiscount(requestStream.Current.DiscountCode);
+                    newAddedCartItem.Price -= discount.Amount;
 
                     shoppingCart.Items.Add(newAddedCartItem);
                 }
